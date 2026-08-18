@@ -1,0 +1,356 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  admin
+  community_admin
+  sports_super_admin
+  sports_admin
+  volunteer_admin
+  volunteer
+  user
+}
+
+enum Gender {
+  male
+  female
+  mixed
+}
+
+enum ParticipantStatus {
+  pending
+  accepted
+  rejected
+}
+
+enum SportType {
+  individual
+  team
+}
+
+enum MedalType {
+  gold
+  silver
+  bronze
+  none
+}
+
+model User {
+  id          String   @id @default(uuid())
+  username    String   @unique
+  email       String?
+  password    String
+  role        Role
+  communityId String?
+  sportId     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  community Community? @relation(fields: [communityId], references: [id])
+  sport     Sport?     @relation(fields: [sportId], references: [id])
+  participant Participant?
+  volunteer   Volunteer?
+
+  @@index([username])
+  @@index([email])
+}
+
+model Participant {
+  id            String           @id @default(uuid())
+  firstName     String
+  middleName    String?
+  lastName      String
+  gender        Gender
+  dob           DateTime
+  email         String
+  phone         String
+  communityId   String
+  userId        String           @unique
+  nextOfKin     Json // { firstName, middleName?, lastName, phone }
+  status        ParticipantStatus @default(pending)
+  teamName      String?
+  teamNames     Json?            // { sportId: teamName } — per-sport team names
+  notes         String?
+  pendingSports Json?            // Array of sport IDs for pending approval
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  community Community         @relation(fields: [communityId], references: [id])
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sports    ParticipantSport[]
+
+  @@index([email])
+  @@index([communityId])
+}
+
+model ParticipantSport {
+  id            String      @id @default(uuid())
+  participantId String
+  sportId       String
+  notes         String?
+  createdAt     DateTime    @default(now())
+
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  sport       Sport       @relation(fields: [sportId], references: [id])
+
+  @@unique([participantId, sportId])
+  @@index([participantId])
+  @@index([sportId])
+}
+
+model Volunteer {
+  id           String    @id @default(uuid())
+  firstName    String
+  middleName   String?
+  lastName     String
+  gender       Gender
+  dob          DateTime
+  email        String    @unique
+  phone        String
+  departmentId String?
+  sportId      String?
+  userId       String    @unique
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  department Department? @relation(fields: [departmentId], references: [id])
+  sport      Sport?     @relation(fields: [sportId], references: [id])
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sports     VolunteerSport[]
+
+  @@index([email])
+  @@index([departmentId])
+  @@index([sportId])
+  @@index([userId])
+}
+
+model Community {
+  id           String    @id @default(uuid())
+  name         String    @unique
+  active       Boolean   @default(true)
+  contactPerson String
+  phone        String
+  email        String    @unique
+  password     String?
+  adminUsername String?   @unique
+  adminEmail   String?   @unique
+  adminPassword String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  users       User[]
+  participants Participant[]
+  contacts    CommunityContact[]
+  leaderboardEntries LeaderboardEntry[]
+
+  @@index([name])
+  @@index([adminUsername])
+  @@index([adminEmail])
+}
+
+model Sport {
+  id             String    @id @default(uuid())
+  name           String
+  active         Boolean   @default(true)
+  type           SportType
+  requiresTeamName Boolean @default(false)
+  parentId       String?
+  venue          String?
+  timings        String?
+  date           DateTime?
+  gender         Gender?
+  ageLimitMin    Int?
+  ageLimitMax    Int?
+  convenorId     String?   @unique
+  rules          String?
+  rulesFileUrl   String?
+  formatCategory String?
+  formatTeam     String?
+  formatGender   String?
+  formatGeneral  String?
+  formatFileUrl  String?
+  drawsFileUrl   String?
+  notes          String?
+  adminUsername  String?   @unique
+  adminEmail     String?   @unique
+  adminPassword  String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  parent        Sport?              @relation("SportHierarchy", fields: [parentId], references: [id])
+  children      Sport[]             @relation("SportHierarchy")
+  users         User[]
+  volunteers    Volunteer[]
+  participants  ParticipantSport[]
+  calendarItems CalendarItem[]
+  volunteerSports VolunteerSport[]
+  convenor      Convenor?           @relation(fields: [convenorId], references: [id])
+  leaderboardEntries LeaderboardEntry[]
+  incompatibleWith SportIncompatibility[] @relation("SportIncompatible")
+  incompatibleSports SportIncompatibility[] @relation("IncompatibleWith")
+
+  @@index([parentId])
+  @@index([name])
+  @@index([convenorId])
+  @@index([adminUsername])
+  @@index([adminEmail])
+}
+
+model SportIncompatibility {
+  id            String   @id @default(uuid())
+  sportId       String
+  incompatibleSportId String
+  createdAt     DateTime @default(now())
+
+  sport             Sport @relation("SportIncompatible", fields: [sportId], references: [id], onDelete: Cascade)
+  incompatibleSport Sport @relation("IncompatibleWith", fields: [incompatibleSportId], references: [id], onDelete: Cascade)
+
+  @@unique([sportId, incompatibleSportId])
+  @@index([sportId])
+  @@index([incompatibleSportId])
+}
+
+model Department {
+  id        String     @id @default(uuid())
+  name      String     @unique
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  volunteers Volunteer[]
+}
+
+model CalendarItem {
+  id        String   @id @default(uuid())
+  sportId   String
+  date      DateTime
+  time      String
+  venue     String
+  type      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sport Sport @relation(fields: [sportId], references: [id])
+
+  @@index([sportId])
+  @@index([date])
+}
+
+model Settings {
+  id                String    @id @default(uuid())
+  ageCalculatorDate DateTime
+  profileFreezeDate DateTime?
+  siteTitle         String?
+  siteIconUrl       String?
+  heroImageUrl      String?
+  heroTitle         String?
+  heroSubtitle      String?
+  heroDescription   String?
+  facebookUrl       String?
+  instagramUrl      String?
+  tiktokUrl         String?
+  linkedinUrl       String?
+  termsAndConditionsText String? @db.Text
+  disclaimerText    String?   @db.Text
+  calendarPdfUrl    String?
+  calendarGrid      Json?
+  updatedAt         DateTime  @updatedAt
+}
+
+model Email {
+  id        String   @id @default(uuid())
+  to        String
+  from      String
+  subject   String
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([to])
+  @@index([createdAt])
+}
+
+model CommunityContact {
+  id          String    @id @default(uuid())
+  communityId String
+  name        String
+  phone       String
+  email       String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId])
+}
+
+model Convenor {
+  id        String   @id @default(uuid())
+  name      String
+  phone     String
+  email     String
+  sportId   String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sport Sport?
+
+  @@index([sportId])
+}
+
+model TournamentFormat {
+  id        String   @id @default(uuid())
+  category  String   // e.g., "team_sports", "individual_sports", "points_system"
+  title     String
+  content   String   // Markdown or plain text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([category])
+  @@index([category])
+}
+
+model LeaderboardEntry {
+  id          String    @id @default(uuid())
+  communityId String
+  sportId     String
+  score       Int       @default(0)
+  position    Int?
+  medalType   MedalType @default(none)
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  sport     Sport     @relation(fields: [sportId], references: [id], onDelete: Cascade)
+
+  @@unique([communityId, sportId])
+  @@index([communityId])
+  @@index([sportId])
+  @@index([score])
+}
+
+model VolunteerSport {
+  id          String    @id @default(uuid())
+  volunteerId String
+  sportId     String
+  createdAt   DateTime  @default(now())
+
+  volunteer   Volunteer @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  sport       Sport     @relation(fields: [sportId], references: [id], onDelete: Cascade)
+
+  @@unique([volunteerId, sportId])
+  @@index([volunteerId])
+  @@index([sportId])
+}
+
+
+
