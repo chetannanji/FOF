@@ -54,7 +54,8 @@ export const prisma = new PrismaClient({
 
 const app = express();
 app.set("trust proxy", true);
-const PORT = process.env.PORT || 3000;
+const PORT = Number.parseInt(process.env.PORT || "10000", 10);
+const HOST = "0.0.0.0";
 
 /**
  * CORS configuration
@@ -78,6 +79,8 @@ const staticOrigins = [
   "http://localhost:5173",
   "http://localhost:8080",
   "http://localhost:3000",
+  "https://fof-iota.vercel.app",
+  "https://fof-klcd.onrender.com",
 ];
 
 const allowedOrigins = Array.from(new Set([...staticOrigins, ...additionalOrigins]));
@@ -202,8 +205,8 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 /**
  * Start server
  */
-const server = app.listen(PORT, async () => {
-  console.log(`Server running on port ${PORT}`);
+const server = app.listen(PORT, HOST, async () => {
+  console.log(`Server running at http://${HOST}:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
 
   // run any startup checks / verifications you had before
@@ -213,6 +216,10 @@ const server = app.listen(PORT, async () => {
     console.warn("verifyEmailConfig failed:", err);
   }
 });
+
+// Keep proxy connections alive long enough to avoid intermittent Render 502s.
+server.keepAliveTimeout = 120_000;
+server.headersTimeout = 121_000;
 
 /**
  * Graceful shutdown — close HTTP server and disconnect prisma
