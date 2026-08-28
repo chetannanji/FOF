@@ -7,9 +7,13 @@ const router = Router();
 
 const createContactSchema = z.object({
   name: z.string().min(1),
-  phone: z.string().min(1),
-  email: z.string().email(),
+  phone: z.string().optional().or(z.literal("")).nullable(),
+  email: z.string().email().optional().or(z.literal("")).nullable(),
 });
+
+function normalizeOptionalText(value?: string | null) {
+  return value?.trim() || "";
+}
 
 // List contacts for a community
 router.get("/community/:communityId", authenticate, async (req: AuthRequest, res: Response) => {
@@ -45,7 +49,9 @@ router.post("/community/:communityId", authenticate, requireRole("admin"), async
     const contact = await prisma.communityContact.create({
       data: {
         communityId,
-        ...data,
+        name: data.name,
+        phone: normalizeOptionalText(data.phone),
+        email: normalizeOptionalText(data.email),
       },
     });
 
@@ -66,7 +72,11 @@ router.patch("/:id", authenticate, requireRole("admin"), async (req: AuthRequest
 
     const contact = await prisma.communityContact.update({
       where: { id },
-      data,
+      data: {
+        ...data,
+        ...(data.phone !== undefined ? { phone: normalizeOptionalText(data.phone) } : {}),
+        ...(data.email !== undefined ? { email: normalizeOptionalText(data.email) } : {}),
+      },
     });
 
     res.json(contact);

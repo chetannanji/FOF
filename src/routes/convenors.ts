@@ -5,12 +5,23 @@ import { authenticate, optionalAuthenticate, AuthRequest, requireRole } from "..
 
 const router = Router();
 
+const optionalEmail = z
+  .string()
+  .email()
+  .optional()
+  .or(z.literal(""))
+  .nullable();
+
 const createConvenorSchema = z.object({
   name: z.string().min(1),
-  phone: z.string().optional().or(z.literal("")),
-  email: z.string().email().optional().or(z.literal("")).or(z.string().length(0)),
+  phone: z.string().optional().or(z.literal("")).nullable(),
+  email: optionalEmail,
   sportId: z.string().optional(),
 });
+
+function normalizeOptionalText(value?: string | null) {
+  return value?.trim() || "";
+}
 
 function canIncludeInactiveSports(req: AuthRequest): boolean {
   const role = req.user?.role as string | undefined;
@@ -109,8 +120,8 @@ router.post("/", authenticate, requireRole("admin", "sports_super_admin"), async
     const convenor = await prisma.convenor.create({
       data: {
         name: data.name,
-        phone: data.phone || "",
-        email: data.email || "",
+        phone: normalizeOptionalText(data.phone),
+        email: normalizeOptionalText(data.email),
         sportId: data.sportId,
       },
       include: {
@@ -191,8 +202,8 @@ router.patch("/:id", authenticate, requireRole("admin", "sports_super_admin"), a
       where: { id },
       data: {
         name: data.name,
-        phone: data.phone !== undefined ? (data.phone || "") : undefined,
-        email: data.email !== undefined ? (data.email || "") : undefined,
+        phone: data.phone !== undefined ? normalizeOptionalText(data.phone) : undefined,
+        email: data.email !== undefined ? normalizeOptionalText(data.email) : undefined,
         sportId: data.sportId,
       },
       include: {

@@ -18,13 +18,27 @@ const createCommunitySchema = z.object({
   name: z.string().min(1),
   active: z.boolean().optional(),
   contactPerson: z.string().min(1),
-  phone: z.string().min(1),
-  email: z.string().email(),
+  phone: z.string().optional().or(z.literal("")).nullable(),
+  email: z.string().email().optional().or(z.literal("")).nullable(),
   password: z.string().optional(),
   adminUsername: usernameFormatSchema.optional().nullable(),
   adminEmail: z.string().email().optional().nullable(),
   adminPassword: z.string().optional().nullable(),
 });
+
+function normalizeCommunityContactFields(data: {
+  phone?: string | null;
+  email?: string | null;
+}) {
+  const normalized: { phone?: string; email?: string | null } = {};
+  if (data.phone !== undefined) {
+    normalized.phone = data.phone?.trim() || "";
+  }
+  if (data.email !== undefined) {
+    normalized.email = data.email?.trim() ? data.email.trim() : null;
+  }
+  return normalized;
+}
 
 async function syncCommunityAdminUser(options: {
   communityId: string;
@@ -144,13 +158,16 @@ router.get("/:id", authenticate, async (req: AuthRequest, res: Response) => {
 router.post("/", authenticate, requireRole("admin"), async (req: AuthRequest, res: Response) => {
   try {
     const data = createCommunitySchema.parse(req.body);
+    const normalizedContact = normalizeCommunityContactFields(data);
+    const phone = normalizedContact.phone ?? "";
+    const email = normalizedContact.email ?? null;
 
     // Check if name, email, or adminEmail already exists
     const existing = await prisma.community.findFirst({
       where: {
         OR: [
           { name: data.name },
-          { email: data.email },
+          ...(email ? [{ email }] : []),
           ...(data.adminEmail ? [{ adminEmail: data.adminEmail } as any] : []),
           ...(data.adminUsername ? [{ adminUsername: data.adminUsername }] : []),
         ],
@@ -182,8 +199,8 @@ router.post("/", authenticate, requireRole("admin"), async (req: AuthRequest, re
         name: data.name,
         active: data.active ?? true,
         contactPerson: data.contactPerson,
-        phone: data.phone,
-        email: data.email,
+        phone,
+        email,
         password: hashedPassword,
         adminUsername,
         adminEmail: data.adminEmail || null,
@@ -230,6 +247,9 @@ router.patch("/:id", authenticate, requireRole("admin"), async (req: AuthRequest
     const { id } = req.params;
     const data = createCommunitySchema.partial().parse(req.body);
 
+    const normalizedContact = normalizeCommunityContactFields(data);
+    const updateData: any = { ...data, ...normalizedContact };
+
     // Hash passwords if provided
     let hashedPassword: string | undefined;
     if (data.password) {
@@ -240,8 +260,6 @@ router.patch("/:id", authenticate, requireRole("admin"), async (req: AuthRequest
     if (data.adminPassword) {
       hashedAdminPassword = await hashPassword(data.adminPassword);
     }
-
-    const updateData: any = { ...data };
     if (hashedPassword !== undefined) {
       updateData.password = hashedPassword;
     }

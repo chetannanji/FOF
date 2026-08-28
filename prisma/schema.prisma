@@ -140,7 +140,7 @@ model Community {
   active       Boolean   @default(true)
   contactPerson String
   phone        String
-  email        String    @unique
+  email        String?   @unique
   password     String?
   adminUsername String?   @unique
   adminEmail   String?   @unique
