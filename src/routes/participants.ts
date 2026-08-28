@@ -696,13 +696,6 @@ router.patch("/me", authenticate, async (req: AuthRequest, res: Response) => {
   try {
     // Check if profile updates are frozen
     const freezeCheck = await isProfileFrozen();
-    if (freezeCheck.frozen) {
-      return res.status(403).json({ 
-        error: "Profile updates are frozen", 
-        message: `Profile updates are no longer allowed after ${freezeCheck.freezeDate ? new Date(freezeCheck.freezeDate).toLocaleDateString() : 'the freeze date'}. Please contact an administrator if you need to make changes.` 
-      });
-    }
-
     const updateSchema = z.object({
       firstName: z.string().min(1).optional(),
       middleName: z.string().optional().nullable(),
@@ -720,6 +713,22 @@ router.patch("/me", authenticate, async (req: AuthRequest, res: Response) => {
     });
 
     const data = updateSchema.parse(req.body);
+    const hasNonNotesUpdate = [
+      data.firstName,
+      data.middleName,
+      data.lastName,
+      data.phone,
+      data.nextOfKin,
+      data.teamName,
+      data.teamNames,
+    ].some((value) => value !== undefined);
+
+    if (freezeCheck.frozen && hasNonNotesUpdate) {
+      return res.status(403).json({
+        error: "Profile updates are frozen",
+        message: `Profile updates are no longer allowed after ${freezeCheck.freezeDate ? new Date(freezeCheck.freezeDate).toLocaleDateString() : "the freeze date"}. Please contact an administrator if you need to make changes.`,
+      });
+    }
 
     const participant = await prisma.participant.findUnique({
       where: { userId: req.user!.id },

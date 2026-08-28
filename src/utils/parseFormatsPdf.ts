@@ -6,139 +6,133 @@ export interface ParsedSportFormat {
   generalFormat: string;
 }
 
-const TEAM_PATTERNS = [
-  "INDIVIDUAL / TEAM",
-  "INDIVIDUAL / DOUBLES",
-  "OPEN / INDIVIDUAL",
-  "INDIVIDUAL",
-  "TEAM",
-  "PAIRS",
-  "SINGLES",
-  "OPEN",
-  "DOUBLES",
-];
-
-const GENDER_PATTERNS = ["MALE & FEMALE", "MALE", "FEMALE", "MIXED"];
+const TEAM_TOKEN =
+  "INDIVIDUAL\\s*/\\s*TEAM|INDIVIDUAL\\s*/\\s*DOUBLES|OPEN\\s*/\\s*INDIVIDUAL|INDIVIDUAL|PAIRS|SINGLES|TEAM";
+const GENDER_TOKEN = "MALE\\s*&\\s*FEMALE|MALE\\s*/\\s*FEMALE|FEMALE|MALE|MIXED";
 
 function normalizeText(text: string): string {
   return text.replace(/\r/g, "\n").replace(/\t/g, " ").replace(/ +/g, " ").trim();
+}
+
+export function normalizeSportKey(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]+/g, "");
 }
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function findPatternIndex(text: string, patterns: string[]): { index: number; match: string } | null {
-  const upper = text.toUpperCase();
-  let best: { index: number; match: string } | null = null;
-
-  for (const pattern of patterns) {
-    const index = upper.indexOf(pattern);
-    if (index === -1) continue;
-    if (!best || index < best.index || pattern.length > best.match.length) {
-      best = { index, match: pattern };
-    }
-  }
-
-  return best;
-}
-
-function parseFormatLine(sportName: string, line: string): ParsedSportFormat | null {
-  const upperLine = line.toUpperCase();
-  const upperSport = sportName.toUpperCase();
-  const sportIndex = upperLine.indexOf(upperSport);
-  if (sportIndex === -1) return null;
-
-  let rest = line.slice(sportIndex + sportName.length).trim();
-  if (!rest) return null;
-
-  const teamMatch = findPatternIndex(rest, TEAM_PATTERNS);
-  if (!teamMatch) {
-    return {
-      sportName,
-      category: rest,
-      team: "",
-      gender: "",
-      generalFormat: "",
-    };
-  }
-
-  const category = rest.slice(0, teamMatch.index).trim().replace(/^[-–|]\s*/, "").replace(/\s*[-–|]\s*$/, "");
-  rest = rest.slice(teamMatch.index).trim();
-  const team = teamMatch.match;
-  rest = rest.slice(team.length).trim().replace(/^[-–|]\s*/, "");
-
-  const genderMatch = findPatternIndex(rest, GENDER_PATTERNS);
-  let gender = "";
-  let generalFormat = rest;
-
-  if (genderMatch) {
-    gender = genderMatch.match;
-    generalFormat = rest.slice(genderMatch.index + gender.length).trim().replace(/^[-–|]\s*/, "");
-  }
-
-  return {
-    sportName,
-    category,
-    team,
-    gender,
-    generalFormat,
-  };
-}
-
 function buildLines(text: string): string[] {
   return normalizeText(text)
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !/^SPORT$/i.test(line) && !/^CATEGORY$/i.test(line));
+    .filter(
+      (line) =>
+        line.length > 0 &&
+        !/^SPORT$/i.test(line) &&
+        !/^CATEGORY$/i.test(line) &&
+        !/^FORMAT$/i.test(line) &&
+        !/SPORTCATEGORY/i.test(line) &&
+        !/GAMES FORMATS/i.test(line) &&
+        !/^VERSION\b/i.test(line) &&
+        !/^SUBJECT TO CHANGE/i.test(line)
+    );
 }
 
-function findLineForSport(lines: string[], sportName: string): string | null {
-  const upperSport = sportName.toUpperCase();
+function isSportPrefix(line: string, sportName: string): boolean {
+  const raw = line.toUpperCase();
+  const sport = sportName.toUpperCase();
+  if (!raw.startsWith(sport)) return false;
+  const next = raw.slice(sport.length);
+  if (!next) return true;
+  if (!/^[A-Z]/.test(next)) return true;
+  return /^(U\d|OPEN|OVER|\d)/.test(next);
+}
+
+function reconstructRows(lines: string[], sportNames: string[]): string[] {
+  const sortedNames = [...sportNames].sort((a, b) => b.length - a.length);
+  const rows: string[] = [];
+  let current = "";
 
   for (const line of lines) {
-    if (line.toUpperCase().startsWith(upperSport)) {
-      return line;
+    const startsSport = sortedNames.some((name) => isSportPrefix(line, name));
+    if (/^An Event with Less/i.test(line)) break;
+    if (startsSport) {
+      if (current) rows.push(current);
+      current = line;
+    } else if (current) {
+      current = `${current} ${line}`;
     }
   }
 
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].toUpperCase() === upperSport) {
-      return [lines[i], ...lines.slice(i + 1, i + 4)].join(" ");
-    }
-  }
-
-  const joined = lines.join(" ");
-  const regex = new RegExp(`\\b${escapeRegex(upperSport)}\\b`, "i");
-  const match = joined.match(regex);
-  if (!match || match.index === undefined) return null;
-
-  const snippet = joined.slice(match.index, match.index + 400);
-  return snippet;
+  if (current) rows.push(current);
+  return rows;
 }
 
-export function parseFormatForSport(text: string, sportName: string): ParsedSportFormat | null {
-  const lines = buildLines(text);
-  const line = findLineForSport(lines, sportName);
-  if (!line) return null;
-  return parseFormatLine(sportName, line);
+function parseGluedFormatLine(sportName: string, line: string): ParsedSportFormat | null {
+  const raw = line.toUpperCase().startsWith(sportName.toUpperCase())
+    ? line.slice(sportName.length)
+    : line.replace(new RegExp(`^${escapeRegex(sportName)}`, "i"), "");
+  const rest = raw.trim();
+  if (!rest) return null;
+
+  const genderRegex = new RegExp(GENDER_TOKEN, "i");
+  const genderMatch = genderRegex.exec(rest);
+  const beforeGender = (genderMatch ? rest.slice(0, genderMatch.index) : rest).trim();
+  const afterGender = genderMatch ? rest.slice(genderMatch.index + genderMatch[0].length).trim() : "";
+
+  const teamRegex = new RegExp(`(${TEAM_TOKEN})$`, "i");
+  const teamMatch = beforeGender.match(teamRegex);
+
+  return {
+    sportName,
+    category: (teamMatch ? beforeGender.slice(0, teamMatch.index) : beforeGender).trim(),
+    team: teamMatch ? teamMatch[1].replace(/\s+/g, " ").toUpperCase() : "",
+    gender: genderMatch ? genderMatch[0].replace(/\s+/g, " ").toUpperCase() : "",
+    generalFormat: afterGender.replace(/\s+/g, " "),
+  };
+}
+
+function findRowForSport(rows: string[], sportName: string, allSportNames: string[]): string | null {
+  const longerNames = allSportNames.filter(
+    (name) => normalizeSportKey(name) !== normalizeSportKey(sportName) && name.length > sportName.length
+  );
+
+  for (const row of rows) {
+    if (!isSportPrefix(row, sportName)) continue;
+    if (longerNames.some((name) => isSportPrefix(row, name))) continue;
+    return row;
+  }
+
+  return null;
+}
+
+export function parseFormatForSport(
+  text: string,
+  sportName: string,
+  allSportNames: string[] = [sportName]
+): ParsedSportFormat | null {
+  const names = allSportNames.length > 0 ? allSportNames : [sportName];
+  const rows = reconstructRows(buildLines(text), names);
+  const row = findRowForSport(rows, sportName, names);
+  if (!row) return null;
+  return parseGluedFormatLine(sportName, row);
 }
 
 export function parseAllFormatsFromText(text: string, sportNames: string[]): ParsedSportFormat[] {
-  const lines = buildLines(text);
-  const joined = lines.join("\n");
+  const rows = reconstructRows(buildLines(text), sportNames);
   const sortedNames = [...sportNames].sort((a, b) => b.length - a.length);
   const results: ParsedSportFormat[] = [];
   const used = new Set<string>();
 
   for (const sportName of sortedNames) {
-    const line = findLineForSport(lines, sportName) || findLineForSport([joined], sportName);
-    if (!line) continue;
+    const row = findRowForSport(rows, sportName, sportNames);
+    if (!row) continue;
 
-    const parsed = parseFormatLine(sportName, line);
+    const parsed = parseGluedFormatLine(sportName, row);
     if (!parsed) continue;
 
-    const key = sportName.toUpperCase();
+    const key = normalizeSportKey(sportName);
     if (used.has(key)) continue;
     used.add(key);
     results.push(parsed);

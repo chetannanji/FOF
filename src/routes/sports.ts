@@ -8,7 +8,7 @@ import { authenticate, optionalAuthenticate, AuthRequest, requireRole } from "..
 import { SportType, Gender, Role } from "@prisma/client";
 import { hashPassword } from "../utils/password";
 import { sendExport } from "../utils/export";
-import { extractTextFromPdfBuffer, parseAllFormatsFromText, parseFormatForSport } from "../utils/parseFormatsPdf";
+import { extractTextFromPdfBuffer, parseAllFormatsFromText, parseFormatForSport, normalizeSportKey } from "../utils/parseFormatsPdf";
 import { assertSportEditAccess } from "../utils/sportAccess";
 import { uploadToSupabase } from "../utils/supabase";
 
@@ -368,7 +368,12 @@ router.post(
 
       const buffer = req.file.buffer;
       const text = await extractTextFromPdfBuffer(buffer);
-      const parsed = parseFormatForSport(text, sportName);
+      const sports = await prisma.sport.findMany({ select: { name: true } });
+      const parsed = parseFormatForSport(
+        text,
+        sportName,
+        sports.map((s) => s.name)
+      );
 
       if (!parsed) {
         return res.status(404).json({
@@ -406,7 +411,7 @@ router.post(
         return res.status(400).json({ error: "No PDF file provided" });
       }
 
-      const sports = await prisma.sport.findMany({ select: { id: true, name: true } });
+      const sports = await prisma.sport.findMany({ select: { id: true, name: true, parentId: true } });
       const buffer = req.file.buffer;
       const text = await extractTextFromPdfBuffer(buffer);
       const parsedFormats = parseAllFormatsFromText(
@@ -422,21 +427,25 @@ router.post(
       const matched: string[] = [];
 
       for (const parsed of parsedFormats) {
-        const sport = sports.find((s) => s.name.toUpperCase() === parsed.sportName.toUpperCase());
-        if (!sport) continue;
+        const matchingSports = sports.filter(
+          (s) => normalizeSportKey(s.name) === normalizeSportKey(parsed.sportName)
+        );
+        if (matchingSports.length === 0) continue;
 
-        await prisma.sport.update({
-          where: { id: sport.id },
-          data: {
-            formatCategory: parsed.category || null,
-            formatTeam: parsed.team || null,
-            formatGender: parsed.gender || null,
-            formatGeneral: parsed.generalFormat || null,
-            formatFileUrl: fileUrl,
-          },
-        });
-        updated += 1;
-        matched.push(sport.name);
+        for (const sport of matchingSports) {
+          await prisma.sport.update({
+            where: { id: sport.id },
+            data: {
+              formatCategory: parsed.category || null,
+              formatTeam: parsed.team || null,
+              formatGender: parsed.gender || null,
+              formatGeneral: parsed.generalFormat || null,
+              formatFileUrl: fileUrl,
+            },
+          });
+          updated += 1;
+          matched.push(sport.name);
+        }
       }
 
       res.json({
