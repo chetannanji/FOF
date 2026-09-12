@@ -14,16 +14,61 @@ const usernameFormatSchema = z
   .max(30, "Username must be at most 30 characters")
   .regex(/^[a-zA-Z0-9_.-]+$/, "Username can only include letters, numbers, underscores, hyphens or dots");
 
-const createCommunitySchema = z.object({
+function blankToNull(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value == null) return null;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+function parseOptionalEmail(value: unknown, field: string): string | null | undefined {
+  const normalized = blankToNull(value);
+  if (normalized == null) return normalized;
+  const result = z.string().email().safeParse(normalized);
+  if (!result.success) {
+    throw new z.ZodError([
+      {
+        code: z.ZodIssueCode.custom,
+        path: [field],
+        message: "Invalid email address",
+      },
+    ]);
+  }
+  return result.data;
+}
+
+function parseOptionalUsername(value: unknown): string | null | undefined {
+  const normalized = blankToNull(value);
+  if (normalized == null) return normalized;
+  const result = usernameFormatSchema.safeParse(normalized);
+  if (!result.success) {
+    throw new z.ZodError(
+      result.error.issues.map((issue) => ({ ...issue, path: ["adminUsername"] }))
+    );
+  }
+  return result.data;
+}
+
+function zodErrorPayload(error: z.ZodError) {
+  const first = error.errors?.[0];
+  const field = Array.isArray(first?.path) ? first.path.join(".") : "";
+  const message = first?.message
+    ? `${field ? `${field}: ` : ""}${first.message}`
+    : "Invalid input";
+  return { error: message, details: error.errors };
+}
+
+const communityWriteSchema = z.object({
   name: z.string().min(1),
   active: z.boolean().optional(),
   contactPerson: z.string().min(1),
-  phone: z.string().optional().or(z.literal("")).nullable(),
-  email: z.union([z.string().email(), z.literal(""), z.null()]).optional(),
+  phone: z.union([z.string(), z.null()]).optional(),
+  email: z.any().optional(),
   password: z.string().optional(),
-  adminUsername: usernameFormatSchema.optional().nullable(),
-  adminEmail: z.union([z.string().email(), z.literal(""), z.null()]).optional(),
-  adminPassword: z.string().optional().nullable(),
+  adminUsername: z.any().optional(),
+  adminEmail: z.any().optional(),
+  adminPassword: z.union([z.string(), z.null()]).optional(),
 });
 
 function normalizeCommunityContactFields(data: {
@@ -157,7 +202,12 @@ router.get("/:id", authenticate, async (req: AuthRequest, res: Response) => {
 // Create community
 router.post("/", authenticate, requireRole("admin"), async (req: AuthRequest, res: Response) => {
   try {
-    const data = createCommunitySchema.parse(req.body);
+    const data = {
+      ...communityWriteSchema.parse(req.body),
+      email: parseOptionalEmail(req.body?.email, "email") ?? null,
+      adminEmail: parseOptionalEmail(req.body?.adminEmail, "adminEmail") ?? null,
+      adminUsername: parseOptionalUsername(req.body?.adminUsername) ?? null,
+    };
     const normalizedContact = normalizeCommunityContactFields(data);
     const phone = normalizedContact.phone ?? "";
     const email = normalizedContact.email ?? null;
@@ -229,7 +279,7 @@ router.post("/", authenticate, requireRole("admin"), async (req: AuthRequest, re
     res.status(201).json(community);
   } catch (error: any) {
     if (error.name === "ZodError") {
-      return res.status(400).json({ error: "Invalid input", details: error.errors });
+      return res.status(400).json(zodErrorPayload(error));
     }
     if (error.message === "Username already exists") {
       return res.status(409).json({ error: error.message });
@@ -250,11 +300,22 @@ router.patch("/:id", authenticate, requireRole("admin", "community_admin"), asyn
         return res.status(403).json({ error: "You can only update your own community" });
       }
     }
-    const data = (
-      req.user!.role === "community_admin"
-        ? createCommunitySchema.pick({ contactPerson: true, phone: true, email: true })
-        : createCommunitySchema
-    ).partial().parse(req.body);
+    const data = {
+      ...(
+        req.user!.role === "community_admin"
+          ? communityWriteSchema.pick({ contactPerson: true, phone: true, email: true })
+          : communityWriteSchema
+      ).partial().parse(req.body),
+      ...(req.body?.email !== undefined
+        ? { email: parseOptionalEmail(req.body.email, "email") ?? null }
+        : {}),
+      ...(req.user!.role === "admin" && req.body?.adminEmail !== undefined
+        ? { adminEmail: parseOptionalEmail(req.body.adminEmail, "adminEmail") ?? null }
+        : {}),
+      ...(req.user!.role === "admin" && req.body?.adminUsername !== undefined
+        ? { adminUsername: parseOptionalUsername(req.body.adminUsername) ?? null }
+        : {}),
+    };
 
     const normalizedContact = normalizeCommunityContactFields(data);
     const updateData: any = { ...data, ...normalizedContact };
@@ -312,7 +373,7 @@ router.patch("/:id", authenticate, requireRole("admin", "community_admin"), asyn
     res.json(community);
   } catch (error: any) {
     if (error.name === "ZodError") {
-      return res.status(400).json({ error: "Invalid input", details: error.errors });
+      return res.status(400).json(zodErrorPayload(error));
     }
     if (error.code === "P2002") {
       return res.status(409).json({ error: "A community with this email already exists" });
