@@ -19,10 +19,10 @@ const createCommunitySchema = z.object({
   active: z.boolean().optional(),
   contactPerson: z.string().min(1),
   phone: z.string().optional().or(z.literal("")).nullable(),
-  email: z.string().email().optional().or(z.literal("")).nullable(),
+  email: z.union([z.string().email(), z.literal(""), z.null()]).optional(),
   password: z.string().optional(),
   adminUsername: usernameFormatSchema.optional().nullable(),
-  adminEmail: z.string().email().optional().nullable(),
+  adminEmail: z.union([z.string().email(), z.literal(""), z.null()]).optional(),
   adminPassword: z.string().optional().nullable(),
 });
 
@@ -242,10 +242,19 @@ router.post("/", authenticate, requireRole("admin"), async (req: AuthRequest, re
 });
 
 // Update community
-router.patch("/:id", authenticate, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+router.patch("/:id", authenticate, requireRole("admin", "community_admin"), async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const data = createCommunitySchema.partial().parse(req.body);
+    if (req.user!.role === "community_admin") {
+      if (req.user!.communityId !== id) {
+        return res.status(403).json({ error: "You can only update your own community" });
+      }
+    }
+    const data = (
+      req.user!.role === "community_admin"
+        ? createCommunitySchema.pick({ contactPerson: true, phone: true, email: true })
+        : createCommunitySchema
+    ).partial().parse(req.body);
 
     const normalizedContact = normalizeCommunityContactFields(data);
     const updateData: any = { ...data, ...normalizedContact };
@@ -290,18 +299,23 @@ router.patch("/:id", authenticate, requireRole("admin"), async (req: AuthRequest
       },
     });
 
-    await syncCommunityAdminUser({
-      communityId: community.id,
-      adminUsername: community.adminUsername,
-      adminEmail: community.adminEmail,
-      hashedPassword: hashedAdminPassword || null,
-      passwordProvided: Boolean(data.adminPassword),
-    });
+    if (req.user!.role === "admin") {
+      await syncCommunityAdminUser({
+        communityId: community.id,
+        adminUsername: community.adminUsername,
+        adminEmail: community.adminEmail,
+        hashedPassword: hashedAdminPassword || null,
+        passwordProvided: Boolean(data.adminPassword),
+      });
+    }
 
     res.json(community);
   } catch (error: any) {
     if (error.name === "ZodError") {
       return res.status(400).json({ error: "Invalid input", details: error.errors });
+    }
+    if (error.code === "P2002") {
+      return res.status(409).json({ error: "A community with this email already exists" });
     }
     if (error.code === "P2025") {
       return res.status(404).json({ error: "Community not found" });
