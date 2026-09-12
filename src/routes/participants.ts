@@ -6,7 +6,7 @@ import path from "path";
 import fs from "fs";
 import { prisma } from "../index";
 import { authenticate, AuthRequest, requireRole } from "../middleware/auth";
-import { filterByAssignedSport, isSportsRepRole } from "../utils/sportAccess";
+import { filterByAssignedSport, isSportInAssignedScope, isSportsRepRole } from "../utils/sportAccess";
 import { ParticipantStatus, Gender, Role, Prisma } from "@prisma/client";
 import { hashPassword } from "../utils/password";
 import { sendEmail } from "../utils/email";
@@ -327,7 +327,11 @@ router.get("/", authenticate, requireRole("admin", "community_admin", "sports_ad
             sport: { active: true },
           },
           include: {
-            sport: true,
+            sport: {
+              include: {
+                parent: { select: { id: true, name: true } },
+              },
+            },
           },
         },
       },
@@ -350,7 +354,8 @@ router.get("/", authenticate, requireRole("admin", "community_admin", "sports_ad
 
     // Sports roles can only see participants registered for their sport
     if (isSportsRepRole(req.user!.role) && req.user!.sportId) {
-      const filtered = filterByAssignedSport(participantsWithPending, req.user!.sportId);
+      const filtered = filterByAssignedSport(participantsWithPending, req.user!.sportId)
+        .filter((participant) => participant.status === "accepted");
       return res.json(filtered);
     }
 
@@ -372,7 +377,11 @@ router.get("/me", authenticate, async (req: AuthRequest, res: Response) => {
             sport: { active: true },
           },
           include: {
-            sport: true,
+            sport: {
+              include: {
+                parent: { select: { id: true, name: true } },
+              },
+            },
           },
         },
       },
@@ -492,7 +501,11 @@ router.post("/", async (req: AuthRequest, res: Response) => {
             sport: { active: true },
           },
           include: {
-            sport: true,
+            sport: {
+              include: {
+                parent: { select: { id: true, name: true } },
+              },
+            },
           },
         },
       },
@@ -595,7 +608,11 @@ router.patch("/:id/status", authenticate, requireRole("admin", "community_admin"
             sport: { active: true },
           },
           include: {
-            sport: true,
+            sport: {
+              include: {
+                parent: { select: { id: true, name: true } },
+              },
+            },
           },
         },
       },
@@ -760,7 +777,11 @@ router.patch("/me", authenticate, async (req: AuthRequest, res: Response) => {
             sport: { active: true },
           },
           include: {
-            sport: true,
+            sport: {
+              include: {
+                parent: { select: { id: true, name: true } },
+              },
+            },
           },
         },
       },
@@ -860,7 +881,11 @@ router.patch("/me/sports", authenticate, async (req: AuthRequest, res: Response)
             sport: { active: true },
           },
           include: {
-            sport: true,
+            sport: {
+              include: {
+                parent: { select: { id: true, name: true } },
+              },
+            },
           },
         },
       },
@@ -1575,7 +1600,11 @@ router.get("/export/:format", authenticate, requireRole("admin", "community_admi
             sport: { active: true },
           },
           include: {
-            sport: true,
+            sport: {
+              include: {
+                parent: { select: { id: true, name: true } },
+              },
+            },
           },
         },
       },
@@ -1585,18 +1614,27 @@ router.get("/export/:format", authenticate, requireRole("admin", "community_admi
     // Sports roles can only export participants registered for their sport
     let filteredParticipants = participants;
     if (isSportsRepRole(req.user!.role) && req.user!.sportId) {
-      filteredParticipants = filterByAssignedSport(participants, req.user!.sportId);
+      filteredParticipants = filterByAssignedSport(participants, req.user!.sportId)
+        .filter((participant) => participant.status === "accepted");
     }
 
+    const assignedSportId = isSportsRepRole(req.user!.role) ? req.user!.sportId : null;
+
     const exportData = filteredParticipants.map((p: any) => {
-      const sportsList = p.sports.map((ps: any) => {
+      const sportsForExport = assignedSportId
+        ? p.sports.filter((ps: any) => isSportInAssignedScope({ id: ps.sportId, parentId: ps.sport?.parentId }, assignedSportId))
+        : p.sports;
+      const sportsList = sportsForExport.map((ps: any) => {
         const sport = ps.sport;
-        if (sport.parentId) {
-          const parent = p.sports.find((ps2: any) => ps2.sport.id === sport.parentId)?.sport;
-          return parent ? `${parent.name} - ${sport.name}` : sport.name;
+        if (sport?.parent?.name) {
+          return `${sport.parent.name} - ${sport.name}`;
         }
-        return sport.name;
+        return sport?.name || "-";
       }).join(", ");
+      const subcategoryList = sportsForExport
+        .map((ps: any) => (ps.sport?.parentId ? ps.sport.name : ""))
+        .filter(Boolean)
+        .join(", ");
 
       const nextOfKin = p.nextOfKin as any;
       // Build teamNames display string: "SportName: TeamName, ..."
@@ -1620,6 +1658,7 @@ router.get("/export/:format", authenticate, requireRole("admin", "community_admi
         phone: p.phone,
         community: p.community?.name || "-",
         sports: sportsList || "-",
+        subcategory: subcategoryList || "-",
         teamName: p.teamName || "",
         teamNames: teamNamesDisplay,
         status: p.status,
@@ -1634,7 +1673,7 @@ router.get("/export/:format", authenticate, requireRole("admin", "community_admi
 
     const headers = [
       "username", "firstName", "middleName", "lastName", "gender", "dob", "email", "phone",
-      "community", "sports", "teamName", "teamNames", "status",
+      "community", "sports", "subcategory", "teamName", "teamNames", "status",
       "nextOfKinFirstName", "nextOfKinMiddleName", "nextOfKinLastName", "nextOfKinPhone",
       "createdAt", "updatedAt"
     ];

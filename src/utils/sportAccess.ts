@@ -26,10 +26,35 @@ export function assertSportEditAccess(req: AuthRequest, _sportId?: string): void
   throw err;
 }
 
-export function filterByAssignedSport<T extends { sports: Array<{ sportId: string }> }>(
+type AssignedSportRef = {
+  sportId: string;
+  sport?: { parentId?: string | null } | null;
+};
+
+function assignedSportIds(sportId?: string | string[] | null): Set<string> | null {
+  if (!sportId) return null;
+  const ids = new Set(Array.isArray(sportId) ? sportId : [sportId]);
+  return ids.size > 0 ? ids : null;
+}
+
+export function isSportInAssignedScope(
+  sport: { id?: string; sportId?: string; parentId?: string | null } | null | undefined,
+  sportId?: string | string[] | null
+): boolean {
+  const ids = assignedSportIds(sportId);
+  if (!ids) return true;
+  const id = sport?.id || sport?.sportId;
+  return Boolean((id && ids.has(id)) || (sport?.parentId && ids.has(sport.parentId)));
+}
+
+/** Parent sport logins also include every subcategory registration. */
+export function filterByAssignedSport<T extends { sports: Array<AssignedSportRef> }>(
   items: T[],
-  sportId?: string | null
+  sportId?: string | string[] | null
 ): T[] {
-  if (!sportId) return items;
-  return items.filter((item) => item.sports.some((ps) => ps.sportId === sportId));
+  const ids = assignedSportIds(sportId);
+  if (!ids) return items;
+  return items.filter((item) =>
+    item.sports.some((ps) => ids.has(ps.sportId) || (ps.sport?.parentId && ids.has(ps.sport.parentId)))
+  );
 }
