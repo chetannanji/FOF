@@ -727,6 +727,7 @@ router.patch("/me", authenticate, async (req: AuthRequest, res: Response) => {
       teamName: z.string().optional().nullable(),
       teamNames: z.record(z.string(), z.string()).optional().nullable(),
       notes: z.string().max(500).optional().nullable(),
+      communityId: z.string().min(1).optional(),
     });
 
     const data = updateSchema.parse(req.body);
@@ -738,6 +739,7 @@ router.patch("/me", authenticate, async (req: AuthRequest, res: Response) => {
       data.nextOfKin,
       data.teamName,
       data.teamNames,
+      data.communityId,
     ].some((value) => value !== undefined);
 
     if (freezeCheck.frozen && hasNonNotesUpdate) {
@@ -765,6 +767,17 @@ router.patch("/me", authenticate, async (req: AuthRequest, res: Response) => {
     if (data.teamNames !== undefined) updateData.teamNames = data.teamNames as any;
     if (data.notes !== undefined) {
       updateData.notes = data.notes && data.notes.trim().length > 0 ? data.notes.trim() : null;
+    }
+    if (data.communityId !== undefined && data.communityId !== participant.communityId) {
+      const community = await prisma.community.findUnique({
+        where: { id: data.communityId },
+        select: { id: true, active: true },
+      });
+      if (!community || !community.active) {
+        return res.status(400).json({ error: "Selected community is not available." });
+      }
+      updateData.communityId = community.id;
+      updateData.status = ParticipantStatus.pending;
     }
 
     const updated = await prisma.participant.update({
