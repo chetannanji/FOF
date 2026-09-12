@@ -423,6 +423,16 @@ router.post(
       const ext = path.extname(req.file.originalname).toLowerCase() || ".pdf";
       const fileUrl = await uploadToSupabase(req.file, `formats/format-${uniqueSuffix}${ext}`);
 
+      await prisma.sport.updateMany({
+        data: {
+          formatCategory: null,
+          formatTeam: null,
+          formatGender: null,
+          formatGeneral: null,
+          formatFileUrl: null,
+        },
+      });
+
       let updated = 0;
       const matched: string[] = [];
 
@@ -430,7 +440,6 @@ router.post(
         const matchingSports = sports.filter(
           (s) => normalizeSportKey(s.name) === normalizeSportKey(parsed.sportName)
         );
-        if (matchingSports.length === 0) continue;
 
         for (const sport of matchingSports) {
           await prisma.sport.update({
