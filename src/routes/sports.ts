@@ -9,6 +9,8 @@ import { SportType, Gender, Role } from "@prisma/client";
 import { hashPassword } from "../utils/password";
 import { sendExport } from "../utils/export";
 import { extractTextFromPdfBuffer, parseAllFormatsFromText, parseFormatForSport, normalizeSportKey } from "../utils/parseFormatsPdf";
+
+const MASTER_FORMATS_CATEGORY = "master_formats_grid";
 import { assertSportEditAccess } from "../utils/sportAccess";
 import { uploadToSupabase } from "../utils/supabase";
 
@@ -269,6 +271,25 @@ router.get("/subsports/:parentId", optionalAuthenticate, async (req: AuthRequest
   }
 });
 
+router.get("/formats-grid", async (_req: AuthRequest, res: Response) => {
+  try {
+    const stored = await prisma.tournamentFormat.findUnique({
+      where: { category: MASTER_FORMATS_CATEGORY },
+    });
+    if (!stored?.content) {
+      return res.json([]);
+    }
+    try {
+      const parsed = JSON.parse(stored.content);
+      return res.json(Array.isArray(parsed) ? parsed : []);
+    } catch {
+      return res.json([]);
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || "Failed to get formats grid" });
+  }
+});
+
 // Get sport by ID
 router.get("/:id", async (req: AuthRequest, res: Response) => {
   try {
@@ -418,12 +439,18 @@ router.post(
         text,
         sports.map((s) => s.name)
       );
+      if (parsedFormats.length === 0) {
+        return res.status(400).json({
+          error: "No format rows could be read from the PDF. The previous formats were left unchanged.",
+        });
+      }
 
       const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
       const ext = path.extname(req.file.originalname).toLowerCase() || ".pdf";
       const fileUrl = await uploadToSupabase(req.file, `formats/format-${uniqueSuffix}${ext}`);
 
       await prisma.sport.updateMany({
+        where: {},
         data: {
           formatCategory: null,
           formatTeam: null,
@@ -431,6 +458,10 @@ router.post(
           formatGeneral: null,
           formatFileUrl: null,
         },
+      });
+
+      await prisma.tournamentFormat.deleteMany({
+        where: { category: MASTER_FORMATS_CATEGORY },
       });
 
       let updated = 0;
@@ -456,6 +487,14 @@ router.post(
           matched.push(sport.name);
         }
       }
+
+      await prisma.tournamentFormat.create({
+        data: {
+          category: MASTER_FORMATS_CATEGORY,
+          title: req.file.originalname,
+          content: JSON.stringify(parsedFormats),
+        },
+      });
 
       res.json({
         url: fileUrl,

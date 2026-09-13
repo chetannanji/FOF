@@ -49,14 +49,34 @@ function isSportPrefix(line: string, sportName: string): boolean {
   return /^(U\d|OPEN|OVER|\d)/.test(next);
 }
 
+function isContinuationLine(line: string): boolean {
+  return /^(under|over|open\b|individual|team|pairs|singles|male|female|mixed|\d+\s*years|\d+\s*[-–to]|u\d|years|ladies|gentlemen|best of|one-|note|version|subject|an event|organizers?|for more)/i.test(
+    line.trim()
+  );
+}
+
+function isLikelySportStart(line: string, sportNames: string[]): boolean {
+  if (sportNames.some((name) => isSportPrefix(line, name))) return true;
+  if (isContinuationLine(line)) return false;
+  if (/^(an event|note|organizers?|version|subject to|for more|game formats|fof)/i.test(line)) {
+    return false;
+  }
+  const hasStructure = new RegExp(
+    `\\b(${TEAM_TOKEN}|${GENDER_TOKEN}|under\\s+\\d|over\\s+\\d|\\d+\\s*years)`,
+    "i"
+  ).test(line);
+  const shortTitle = line.length <= 40 && !/[,:]/.test(line);
+  return hasStructure || shortTitle;
+}
+
 function reconstructRows(lines: string[], sportNames: string[]): string[] {
   const sortedNames = [...sportNames].sort((a, b) => b.length - a.length);
   const rows: string[] = [];
   let current = "";
 
   for (const line of lines) {
-    const startsSport = sortedNames.some((name) => isSportPrefix(line, name));
     if (/^An Event with Less/i.test(line)) break;
+    const startsSport = isLikelySportStart(line, sortedNames);
     if (startsSport) {
       if (current) rows.push(current);
       current = line;
@@ -67,6 +87,17 @@ function reconstructRows(lines: string[], sportNames: string[]): string[] {
 
   if (current) rows.push(current);
   return rows;
+}
+
+function splitSportFromRow(row: string, sportNames: string[]): string {
+  const sortedNames = [...sportNames].sort((a, b) => b.length - a.length);
+  for (const name of sortedNames) {
+    if (isSportPrefix(row, name)) return name;
+  }
+  const split = row.match(
+    /^(.*?)(\s+(?:under|over|open\b|\d+\s*years|\d+\s*[-–]|\d+\s*to|u\d|individual|team|pairs|singles))/i
+  );
+  return (split?.[1] || row).trim();
 }
 
 function parseGluedFormatLine(sportName: string, line: string): ParsedSportFormat | null {
@@ -120,20 +151,18 @@ export function parseFormatForSport(
 }
 
 export function parseAllFormatsFromText(text: string, sportNames: string[]): ParsedSportFormat[] {
-  const rows = reconstructRows(buildLines(text), sportNames);
-  const sortedNames = [...sportNames].sort((a, b) => b.length - a.length);
+  const names = sportNames;
+  const rows = reconstructRows(buildLines(text), names);
   const results: ParsedSportFormat[] = [];
   const used = new Set<string>();
 
-  for (const sportName of sortedNames) {
-    const row = findRowForSport(rows, sportName, sportNames);
-    if (!row) continue;
-
+  for (const row of rows) {
+    const sportName = splitSportFromRow(row, names);
+    if (!sportName) continue;
     const parsed = parseGluedFormatLine(sportName, row);
     if (!parsed) continue;
-
-    const key = normalizeSportKey(sportName);
-    if (used.has(key)) continue;
+    const key = normalizeSportKey(parsed.sportName);
+    if (!key || used.has(key)) continue;
     used.add(key);
     results.push(parsed);
   }
