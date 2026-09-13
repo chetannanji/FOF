@@ -300,22 +300,35 @@ router.patch("/:id", authenticate, requireRole("admin", "community_admin"), asyn
         return res.status(403).json({ error: "You can only update your own community" });
       }
     }
-    const data = {
-      ...(
-        req.user!.role === "community_admin"
-          ? communityWriteSchema.pick({ contactPerson: true, phone: true, email: true })
-          : communityWriteSchema
-      ).partial().parse(req.body),
-      ...(req.body?.email !== undefined
-        ? { email: parseOptionalEmail(req.body.email, "email") ?? null }
-        : {}),
-      ...(req.user!.role === "admin" && req.body?.adminEmail !== undefined
-        ? { adminEmail: parseOptionalEmail(req.body.adminEmail, "adminEmail") ?? null }
-        : {}),
-      ...(req.user!.role === "admin" && req.body?.adminUsername !== undefined
-        ? { adminUsername: parseOptionalUsername(req.body.adminUsername) ?? null }
-        : {}),
-    };
+    const parsed = communityWriteSchema.partial().parse(req.body);
+    const email = parsed.email !== undefined ? parseOptionalEmail(parsed.email, "email") ?? null : undefined;
+    const adminEmail =
+      parsed.adminEmail !== undefined ? parseOptionalEmail(parsed.adminEmail, "adminEmail") ?? null : undefined;
+    const adminUsername =
+      parsed.adminUsername !== undefined ? parseOptionalUsername(parsed.adminUsername) ?? null : undefined;
+
+    const data: {
+      name?: string;
+      active?: boolean;
+      contactPerson?: string;
+      phone?: string | null;
+      email?: string | null;
+      password?: string;
+      adminUsername?: string | null;
+      adminEmail?: string | null;
+      adminPassword?: string | null;
+    } = req.user!.role === "community_admin"
+      ? {
+          contactPerson: parsed.contactPerson,
+          phone: parsed.phone,
+          ...(email !== undefined ? { email } : {}),
+        }
+      : {
+          ...parsed,
+          ...(email !== undefined ? { email } : {}),
+          ...(adminEmail !== undefined ? { adminEmail } : {}),
+          ...(adminUsername !== undefined ? { adminUsername } : {}),
+        };
 
     const normalizedContact = normalizeCommunityContactFields(data);
     const updateData: any = { ...data, ...normalizedContact };

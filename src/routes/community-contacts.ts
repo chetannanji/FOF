@@ -69,13 +69,14 @@ router.patch("/:id", authenticate, requireRole("admin"), async (req: AuthRequest
   try {
     const { id } = req.params;
     const data = createContactSchema.partial().parse(req.body);
+    const { phone, email, ...rest } = data;
 
     const contact = await prisma.communityContact.update({
       where: { id },
       data: {
-        ...data,
-        ...(data.phone !== undefined ? { phone: normalizeOptionalText(data.phone) } : {}),
-        ...(data.email !== undefined ? { email: normalizeOptionalText(data.email) } : {}),
+        ...rest,
+        ...(phone !== undefined ? { phone: normalizeOptionalText(phone) } : {}),
+        ...(email !== undefined ? { email: normalizeOptionalText(email) } : {}),
       },
     });
 
