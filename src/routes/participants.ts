@@ -101,6 +101,16 @@ function getSportIdsFromInput(sports: any[]): string[] {
     .filter((sportId: unknown): sportId is string => typeof sportId === "string" && sportId.length > 0);
 }
 
+async function getActiveCommunitySelectionError(communityId: string): Promise<string | null> {
+  const community = await prisma.community.findUnique({
+    where: { id: communityId },
+    select: { id: true, name: true, active: true },
+  });
+  if (!community) return "Selected community is not available.";
+  if (!community.active) return `Inactive communities cannot be selected: ${community.name}`;
+  return null;
+}
+
 async function getActiveSportSelectionError(sportIds: string[]): Promise<string | null> {
   const uniqueSportIds = [...new Set(sportIds)];
   const sports = await prisma.sport.findMany({
@@ -412,6 +422,11 @@ router.post("/", async (req: AuthRequest, res: Response) => {
 
     // Normalize sports array - extract sportIds for validation
     const sportIds = getSportIdsFromInput(data.sports);
+    const communityError = await getActiveCommunitySelectionError(data.communityId);
+    if (communityError) {
+      return res.status(400).json({ error: communityError });
+    }
+
     const activeSportError = await getActiveSportSelectionError(sportIds);
     if (activeSportError) {
       return res.status(400).json({ error: activeSportError });

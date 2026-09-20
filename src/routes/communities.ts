@@ -1,7 +1,7 @@
 import { Router, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../index";
-import { authenticate, AuthRequest, requireRole } from "../middleware/auth";
+import { authenticate, optionalAuthenticate, AuthRequest, requireRole } from "../middleware/auth";
 import { hashPassword } from "../utils/password";
 import { sendExport } from "../utils/export";
 import { Role } from "@prisma/client";
@@ -143,10 +143,16 @@ async function syncCommunityAdminUser(options: {
   });
 }
 
+function canIncludeInactiveCommunities(req: AuthRequest): boolean {
+  const role = req.user?.role as string | undefined;
+  return req.query.includeInactive === "true" && role === "admin";
+}
+
 // List communities (public - needed for login page)
-router.get("/", async (req: AuthRequest, res: Response) => {
+router.get("/", optionalAuthenticate, async (req: AuthRequest, res: Response) => {
   try {
     const communities = await prisma.community.findMany({
+      where: canIncludeInactiveCommunities(req) ? {} : { active: true },
       orderBy: { name: "asc" },
       select: {
         id: true,

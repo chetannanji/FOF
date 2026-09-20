@@ -11,6 +11,85 @@ import { sendExport } from "../utils/export";
 import { extractTextFromPdfBuffer, parseAllFormatsFromText, parseFormatForSport, normalizeSportKey } from "../utils/parseFormatsPdf";
 
 const MASTER_FORMATS_CATEGORY = "master_formats_grid";
+
+type MasterFormatRow = {
+  sportName: string;
+  category: string;
+  team: string;
+  gender: string;
+  generalFormat: string;
+};
+
+function sportHasFormatData(sport: {
+  formatCategory?: string | null;
+  formatTeam?: string | null;
+  formatGender?: string | null;
+  formatGeneral?: string | null;
+}) {
+  return Boolean(
+    sport.formatCategory?.trim() ||
+      sport.formatTeam?.trim() ||
+      sport.formatGender?.trim() ||
+      sport.formatGeneral?.trim()
+  );
+}
+
+async function syncMasterFormatsGridForSport(sport: {
+  name: string;
+  formatCategory?: string | null;
+  formatTeam?: string | null;
+  formatGender?: string | null;
+  formatGeneral?: string | null;
+}) {
+  const stored = await prisma.tournamentFormat.findUnique({
+    where: { category: MASTER_FORMATS_CATEGORY },
+  });
+
+  let rows: MasterFormatRow[] = [];
+  if (stored?.content) {
+    try {
+      const parsed = JSON.parse(stored.content);
+      if (Array.isArray(parsed)) rows = parsed;
+    } catch {
+      rows = [];
+    }
+  }
+
+  const key = normalizeSportKey(sport.name);
+  const idx = rows.findIndex((row) => normalizeSportKey(row.sportName) === key);
+
+  if (!sportHasFormatData(sport)) {
+    if (idx >= 0) rows.splice(idx, 1);
+  } else {
+    const row: MasterFormatRow = {
+      sportName: sport.name,
+      category: sport.formatCategory?.trim() || "",
+      team: sport.formatTeam?.trim() || "",
+      gender: sport.formatGender?.trim() || "",
+      generalFormat: sport.formatGeneral?.trim() || "",
+    };
+    if (idx >= 0) rows[idx] = row;
+    else rows.push(row);
+  }
+
+  if (!stored) {
+    if (rows.length === 0) return;
+    await prisma.tournamentFormat.create({
+      data: {
+        category: MASTER_FORMATS_CATEGORY,
+        title: "Sport format edits",
+        content: JSON.stringify(rows),
+      },
+    });
+    return;
+  }
+
+  await prisma.tournamentFormat.update({
+    where: { category: MASTER_FORMATS_CATEGORY },
+    data: { content: JSON.stringify(rows) },
+  });
+}
+
 import { assertSportEditAccess } from "../utils/sportAccess";
 import { uploadToSupabase } from "../utils/supabase";
 
@@ -758,6 +837,15 @@ router.patch("/:id", authenticate, requireRole("admin", "sports_super_admin"), a
         hashedPassword: hashedAdminPassword || null,
         passwordProvided: Boolean(data.adminPassword),
       });
+    }
+
+    const formatFieldsTouched =
+      data.formatCategory !== undefined ||
+      data.formatTeam !== undefined ||
+      data.formatGender !== undefined ||
+      data.formatGeneral !== undefined;
+    if (formatFieldsTouched) {
+      await syncMasterFormatsGridForSport(sport);
     }
 
     res.json(sport);
