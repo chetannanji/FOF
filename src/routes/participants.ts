@@ -860,13 +860,19 @@ router.patch("/me/sports", authenticate, async (req: AuthRequest, res: Response)
       return res.status(404).json({ error: "Participant not found" });
     }
 
-    // Check if sports have actually changed
-    const currentSportIds = participant.sports.map((ps: any) => ps.sportId).sort();
+    const approvedSportIds = participant.sports.map((ps: any) => ps.sportId).sort();
+    const pendingSportIds =
+      participant.pendingSports && Array.isArray(participant.pendingSports)
+        ? getSportIdsFromInput(participant.pendingSports as any[]).sort()
+        : [];
+    const currentSportIds =
+      participant.status === "accepted" && pendingSportIds.length > 0
+        ? pendingSportIds
+        : approvedSportIds;
     const newSportIds = [...sportIds].sort();
     const sportsChanged = JSON.stringify(currentSportIds) !== JSON.stringify(newSportIds);
 
     if (!sportsChanged) {
-      // No change, return current participant
       const updated = await prisma.participant.findUnique({
         where: { id: participant.id },
         include: {
@@ -884,21 +890,31 @@ router.patch("/me/sports", authenticate, async (req: AuthRequest, res: Response)
       return res.json(updated);
     }
 
-    // If participant was previously accepted, set status to pending and store new sports in pendingSports
-    // If already pending, just update pendingSports with the latest selection
-    const updateData: any = {
-      pendingSports: sports, // Store full sports array with notes
-    };
-
-    // Only set status to pending if it was previously accepted
     if (participant.status === "accepted") {
-      updateData.status = "pending";
+      await prisma.participant.update({
+        where: { id: participant.id },
+        data: {
+          pendingSports: sports,
+          status: ParticipantStatus.pending,
+        },
+      });
+    } else {
+      await prisma.participantSport.deleteMany({
+        where: { participantId: participant.id },
+      });
+      if (sportIds.length > 0) {
+        await prisma.participantSport.createMany({
+          data: sportIds.map((sportId) => ({
+            participantId: participant.id,
+            sportId,
+          })),
+        });
+      }
+      await prisma.participant.update({
+        where: { id: participant.id },
+        data: { pendingSports: null },
+      });
     }
-
-    await prisma.participant.update({
-      where: { id: participant.id },
-      data: updateData,
-    });
 
     const updated = await prisma.participant.findUnique({
       where: { id: participant.id },
