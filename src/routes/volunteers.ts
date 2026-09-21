@@ -5,6 +5,7 @@ import { authenticate, AuthRequest, requireRole } from "../middleware/auth";
 import { Gender, Role } from "@prisma/client";
 import { hashPassword } from "../utils/password";
 import { sendExport } from "../utils/export";
+import { getProfileFreezeStatus, formatProfileFreezeMessage } from "../utils/profileFreeze";
 
 const router = Router();
 
@@ -272,6 +273,14 @@ router.get("/", authenticate, async (req: AuthRequest, res: Response) => {
 // Create volunteer
 router.post("/", async (req: AuthRequest, res: Response) => {
   try {
+    const freezeCheck = await getProfileFreezeStatus();
+    if (freezeCheck.frozen) {
+      return res.status(403).json({
+        error: "Registration is closed",
+        message: formatProfileFreezeMessage(freezeCheck.freezeDate, "New registrations"),
+      });
+    }
+
     const data = createVolunteerSchema.parse(req.body);
 
     // Check username uniqueness

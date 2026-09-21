@@ -407,6 +407,14 @@ router.get("/me", authenticate, async (req: AuthRequest, res: Response) => {
 router.post("/", async (req: AuthRequest, res: Response) => {
   let createdUserId: string | null = null;
   try {
+    const freezeCheck = await isProfileFrozen();
+    if (freezeCheck.frozen) {
+      return res.status(403).json({
+        error: "Registration is closed",
+        message: `New registrations are no longer accepted after ${freezeCheck.freezeDate ? new Date(freezeCheck.freezeDate).toLocaleDateString() : "the freeze date"}. Please contact an administrator.`,
+      });
+    }
+
     const data = createParticipantSchema.parse(req.body);
 
     const existingUsername = await prisma.user.findUnique({
